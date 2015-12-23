@@ -1,0 +1,22 @@
+{
+  "name": "tara-to-couch",
+  "version": "1.0.0",
+  "description": "tara db migration to couchdb",
+  "main": "migration.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jkusniar/tara-to-couch.git"
+  },
+  "author": "Jan Kusniar",
+  "license": "GPL-3.0",
+  "bugs": {
+    "url": "https://github.com/jkusniar/tara-to-couch/issues"
+  },
+  "homepage": "https://github.com/jkusniar/tara-to-couch#readme",
+  "dependencies": {
+    "pg": "^4.4.3"
+  }
+}
