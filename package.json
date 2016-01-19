@@ -17,7 +17,9 @@
   },
   "homepage": "https://github.com/jkusniar/tara-to-couch#readme",
   "dependencies": {
+    "docuri": "^4.2.1",
     "pg": "^4.4.3",
-    "pouchdb": "^5.1.0"
+    "pouchdb": "^5.1.0",
+    "speakingurl": "^8.0.2"
   }
 }
