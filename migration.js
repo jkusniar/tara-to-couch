@@ -59,13 +59,20 @@ function migrateClients() {
     var query = pqClient.query('SELECT c.id as legacy_id, c.first_name, c.last_name, t.name as title, ' +
         'c.phone_1, c.phone_2, c.email, c.note, c.ic, c.dic, c.icdph, ' +
         'ci.city, ci.psc as city_zip, s.street, s.psc as street_psc, c.house_no, ' +
-        'p.name as pname, p.birth_date, p.note as pnote, p.is_dead, p.lysset ' +
+        'p.name as pname, p.birth_date, p.note as pnote, p.is_dead, p.lysset, ' +
+        'sp.name as species, b.name as breed, sx.name as sex ' +
         'FROM client c ' +
         'JOIN patient p on p.client_id = c.id ' +
         'LEFT JOIN lov_title t on t.id = c.title_id ' +
         'LEFT JOIN lov_city ci on ci.id = c.city_id ' +
-        'LEFT JOIN lov_street s on s.id = c.street_id ORDER BY c.id, p.id');
+        'LEFT JOIN lov_street s on s.id = c.street_id ' +
+        'LEFT JOIN lov_species sp on sp.id = p.species_id ' + 
+        'LEFT JOIN lov_breed b on b.id = p.breed_id ' +
+        'LEFT JOIN lov_sex sx on sx.id = p.sex_id ' + 
+        'ORDER BY c.id, p.id');
     query.on('row', function (row) {
+        var timestamp = new Date().toJSON();
+        
         // ZIPcode logic
         var zip = row.city_zip;
         if (row.street_psc != null) {
@@ -83,7 +90,11 @@ function migrateClients() {
             birthDate: row.birth_date,
             note: row.pnote,
             dead: dead,
-            lysset: row.lysset
+            lysset: row.lysset,
+            species: row.species,
+            breed: row.breed,
+            sex: row.sex,
+            created: timestamp
         };
 
         // process client
@@ -109,9 +120,9 @@ function migrateClients() {
                 street: row.street,
                 zipcode: zip,
                 houseNo: row.house_no,
-                created: new Date().toJSON(),
-                type: 'client',
-                patients: [patient]
+                created: timestamp,
+                type: 'owner',
+                pets: [patient]
             };
             
             // FIXME: might be better to use https://github.com/pouchdb/collate/ for ID generation
@@ -125,7 +136,7 @@ function migrateClients() {
                 clients = [];
             }
         } else {
-            clientRec.patients.push(patient);
+            clientRec.pets.push(patient);
         }
         
         prevClientId = row.legacy_id;
