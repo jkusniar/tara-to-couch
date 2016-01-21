@@ -14,17 +14,21 @@ function getPqClient() {
     return pqClient;
 }
 
-function generateClientId(clientRec) {
-    var id = 'record/' + getSlug(clientRec.lastName, { lang: 'sk' }) + '/';
+function getClientId(firstName, lastName, legacyId) {
+    var id = 'record/' + getSlug(lastName, { lang: 'sk' }) + '/';
 
-    var firstName = getSlug(clientRec.firstName, { lang: 'sk' });
-    if (firstName !== '') {
-        id += firstName + '/';
+    var fn = getSlug(firstName, { lang: 'sk' });
+    if (fn !== '') {
+        id += fn + '/';
     }
 
-    id += clientRec.legacyId;
+    id += legacyId;
 
     return id;
+}
+
+function getRecordId(clientId, patientName, recordDate) {
+    return clientId + '/' + getSlug(patientName, { lang: 'sk' }) + '/' + recordDate;
 }
 
 function migration() {
@@ -43,6 +47,7 @@ function migration() {
         if (!err) {
             // TODO trim empty characters off first and last name 
             migrateClients();
+            migrateRecords();
         }
     });
 }
@@ -54,7 +59,7 @@ function migrateClients() {
     var i = 1;
 
     var clients = [];
-    var prevClientId = -1;
+    var prevClientId = 'ShowMeYourGenitals';
     var clientRec = null;
     var query = pqClient.query('SELECT c.id as legacy_id, c.first_name, c.last_name, t.name as title, ' +
         'c.phone_1, c.phone_2, c.email, c.note, c.ic, c.dic, c.icdph, ' +
@@ -66,9 +71,9 @@ function migrateClients() {
         'LEFT JOIN lov_title t on t.id = c.title_id ' +
         'LEFT JOIN lov_city ci on ci.id = c.city_id ' +
         'LEFT JOIN lov_street s on s.id = c.street_id ' +
-        'LEFT JOIN lov_species sp on sp.id = p.species_id ' + 
+        'LEFT JOIN lov_species sp on sp.id = p.species_id ' +
         'LEFT JOIN lov_breed b on b.id = p.breed_id ' +
-        'LEFT JOIN lov_sex sx on sx.id = p.sex_id ' + 
+        'LEFT JOIN lov_sex sx on sx.id = p.sex_id ' +
         'ORDER BY c.id, p.id');
     query.on('row', function (row) {
         var timestamp = new Date().toJSON();
@@ -84,7 +89,7 @@ function migrateClients() {
         if (row.is_dead != null && row.is_dead === '1') {
             dead = true;
         }
-        
+
         var patient = {
             name: row.pname,
             birthDate: row.birth_date,
@@ -97,15 +102,20 @@ function migrateClients() {
             created: timestamp
         };
 
+        
+        // FIXME: might be better to use https://github.com/pouchdb/collate/ for ID generation
+        // if search by last name is to be implemented using primary index (allDocs() and _id)
+        var clientId = getClientId(row.first_name, row.last_name, row.legacy_id);
+        
         // process client
-        if (prevClientId != row.legacy_id) {
+        if (prevClientId !== clientId) {
             // put old one to list
             if (clientRec) {
                 clients.push(clientRec);
             }
 
             clientRec = {
-                legacyId: row.legacy_id,
+                _id: clientId,
                 firstName: row.first_name,
                 lastName: row.last_name,
                 title: row.title,
@@ -124,10 +134,6 @@ function migrateClients() {
                 type: 'owner',
                 pets: [patient]
             };
-            
-            // FIXME: might be better to use https://github.com/pouchdb/collate/ for ID generation
-            // if search by last name is to be implemented using primary index (allDocs() and _id)
-            clientRec._id = generateClientId(clientRec);
 
             // dump to pouch!
             if (i++ % 100 == 0) {
@@ -138,19 +144,82 @@ function migrateClients() {
         } else {
             clientRec.pets.push(patient);
         }
-        
-        prevClientId = row.legacy_id;
+
+        prevClientId = clientRec._id;
     });
     query.on('end', function (result) {
         // last one missing!
         clients.push(clientRec);
-        
+
         if (clients.length != 0) {
             console.log(' -> pushing remaining ' + clients.length + ' clients to pouch');
             dumpToPouch(clients);
         }
         console.log(' -> patients processed: ' + result.rowCount);
         console.log(' -> clients processed: ' + (i - 1));
+    });
+}
+
+function migrateRecords() {
+    console.log('$ Migrating records');
+    var pqClient = getPqClient();
+
+    var i = 1;
+
+    var records = [];
+    var prevRecordId = 'ShowMeYourGenitals';
+    var record = null;
+
+    var query = pqClient.query('SELECT c.id as legacy_id, c.first_name, c.last_name,  p.name as pname, r.rec_date, ' +
+        'i.item_price ' +
+        'FROM client c ' +
+        'JOIN patient p on p.client_id = c.id ' +
+        'JOIN record r on r.patient_id = p.id ' +
+        'JOIN record_item i on i.record_id = r.id ' +
+        'ORDER BY c.id, p.id, r.rec_date, i.id');
+    query.on('row', function (row) {
+        var item = {
+            itemPrice: row.item_price
+        };
+        
+        var date = row.rec_date.toJSON();
+
+        var recordId = getRecordId(getClientId(row.first_name, row.last_name, row.legacy_id), row.pname, date);
+        if (prevRecordId !== recordId) {
+            // put old one to list
+            if (record) {
+                records.push(record);
+            }
+            
+            record = {
+              _id: recordId,
+              date: date,
+              type: 'record',
+              items: [item]
+            };
+            
+            // dump to pouch!
+            if (i++ % 100 == 0) {
+                console.log(' -> pushing ' + records.length + ' records to pouch');
+                dumpToPouch(records);
+                records = [];
+            }
+        } else {
+            record.items.push(item);
+        }
+
+        prevRecordId = recordId;
+    });
+    query.on('end', function (result) {
+        // last one missing!
+        records.push(record);
+
+        if (records.length != 0) {
+            console.log(' -> pushing remaining ' + records.length + ' records to pouch');
+            dumpToPouch(records);
+        }
+        console.log(' -> record items processed: ' + result.rowCount);
+        console.log(' -> records processed: ' + (i - 1));
     });
 }
 
