@@ -31,6 +31,11 @@ function getRecordId(clientId, patientName, recordDate) {
     return clientId + '/' + getSlug(patientName, { lang: 'sk' }) + '/' + recordDate;
 }
 
+function getProductId(productName, unitName) {
+    return 'product/' + getSlug(productName, { lang: 'sk' }) +
+        '/' + getSlug(unitName, { lang: 'sk' });
+}
+
 function migration() {
     console.log('$ Deleting empty clients with no patient records');
     var err = false;
@@ -48,6 +53,7 @@ function migration() {
             // TODO trim empty characters off first and last name 
             migrateClients();
             migrateRecords();
+            migrateProducts();
         }
     });
 }
@@ -250,6 +256,45 @@ function migrateRecords() {
         console.log(' -> record items processed: ' + result.rowCount);
         console.log(' -> records processed: ' + (i - 1));
     });
+}
+
+/*
+    remove duplicate products from source before running this. e.g.:
+    select (p.name || '-' || u.name) as aggname, count(*) 
+        from lov_product p 
+        join lov_unit u on u.id = p.unit_id 
+        group by aggname having count(*) > 1;
+        
+    update record_item set prod_id = 512 where prod_id = 318;
+    delete from lov_product where id = 318;
+    delete from lov_product where id = 932;
+
+*/
+function migrateProducts() {
+    console.log('$ Migrating products');
+    var pqClient = getPqClient();
+    
+    var products = [];
+    var query = pqClient.query('SELECT pr.name as pname, pr.price, pr.valid_to, pr.plu, u.name as uname ' +
+        'FROM lov_product pr ' +
+        'LEFT JOIN lov_unit u on u.id = pr.unit_id ' +
+        'ORDER BY pr.id');
+         query.on('row', function (row) {
+             products.push({
+                 _id: getProductId(row.pname, row.uname),
+                 description: row.pname,
+                 unitPrice: row.price,
+                 unit: row.uname,
+                 validTo: row.valid_to,
+                 plu: row.plu,
+                 type: 'product',
+                 created: new Date().toJSON()
+             });
+         });
+         query.on('end', function (result) {
+             dumpToPouch(products);
+             console.log(' -> products processed: ' + result.rowCount);
+         });
 }
 
 function dumpToPouch(docs) {
