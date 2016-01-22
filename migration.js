@@ -95,12 +95,16 @@ function migrateClients() {
             birthDate: row.birth_date,
             note: row.pnote,
             dead: dead,
-            lysset: row.lysset,
+            tags: [],
             species: row.species,
             breed: row.breed,
             sex: row.sex,
             created: timestamp
         };
+        
+        if (row.lysset != null) {
+            patient.tags.push(row.lysset);
+        }
 
         
         // FIXME: might be better to use https://github.com/pouchdb/collate/ for ID generation
@@ -131,8 +135,8 @@ function migrateClients() {
                 zipcode: zip,
                 houseNo: row.house_no,
                 created: timestamp,
-                type: 'owner',
-                pets: [patient]
+                type: 'client',
+                patients: [patient]
             };
 
             // dump to pouch!
@@ -142,7 +146,7 @@ function migrateClients() {
                 clients = [];
             }
         } else {
-            clientRec.pets.push(patient);
+            clientRec.patients.push(patient);
         }
 
         prevClientId = clientRec._id;
@@ -171,17 +175,33 @@ function migrateRecords() {
     var record = null;
 
     var query = pqClient.query('SELECT c.id as legacy_id, c.first_name, c.last_name,  p.name as pname, r.rec_date, ' +
-        'i.item_price ' +
+        'r.data, i.amount, i.prod_price, i.item_price, i.item_type, ' +
+        'pr.name as prod_name, pr.plu, u.name as unit_name ' +
         'FROM client c ' +
         'JOIN patient p on p.client_id = c.id ' +
         'JOIN record r on r.patient_id = p.id ' +
         'LEFT JOIN record_item i on i.record_id = r.id ' +
+        'LEFT JOIN lov_product pr on pr.id = i.prod_id ' +
+        'LEFT JOIN lov_unit u on u.id = pr.unit_id ' +
         'ORDER BY c.id, p.id, r.id, i.id');
     query.on('row', function (row) {
         var item = null
         if (row.item_price != null) {
+            var type = 'L'; //LABOUR (==0)
+            if (row.item_type === 1) {
+                type = 'M'; // MATERIAL (==1)
+            } 
+            
+            // TODO consider dividing labour and material items to 2 lists
+            
             item = {
-                itemPrice: row.item_price
+                description: row.prod_name,
+                unitPrice: row.prod_price,
+                quantity: row.amount,
+                unit: row.unit_name,
+                price: row.item_price,
+                itemType: type,
+                plu: row.plu
             };
         }
 
@@ -197,6 +217,7 @@ function migrateRecords() {
             record = {
                 _id: recordId,
                 date: date,
+                log: row.data,
                 type: 'record'
             };
 
