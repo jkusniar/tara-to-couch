@@ -36,6 +36,18 @@ function getProductId(productName, unitName) {
         '/' + getSlug(unitName, { lang: 'sk' });
 }
 
+function getAddressId(city, street, zip) {
+    var id = 'address/' + getSlug(city, { lang: 'sk' })
+
+    if (street) {
+        id += '/' + getSlug(street, { lang: 'sk' });
+    }
+
+    id += '/' + getSlug(zip, { lang: 'sk' });
+
+    return id;
+}
+
 function migration() {
     console.log('$ Deleting empty clients with no patient records');
     var err = false;
@@ -54,6 +66,7 @@ function migration() {
             migrateClients();
             migrateRecords();
             migrateProducts();
+            migrateAddresses();
         }
     });
 }
@@ -107,7 +120,7 @@ function migrateClients() {
             sex: row.sex,
             created: timestamp
         };
-        
+
         if (row.lysset != null) {
             patient.tags.push(row.lysset);
         }
@@ -175,7 +188,6 @@ function migrateRecords() {
     var pqClient = getPqClient();
 
     var i = 1;
-
     var records = [];
     var prevRecordId = 'ShowMeYourGenitals';
     var record = null;
@@ -273,28 +285,75 @@ function migrateRecords() {
 function migrateProducts() {
     console.log('$ Migrating products');
     var pqClient = getPqClient();
-    
+
     var products = [];
     var query = pqClient.query('SELECT pr.name as pname, pr.price, pr.valid_to, pr.plu, u.name as uname ' +
         'FROM lov_product pr ' +
         'LEFT JOIN lov_unit u on u.id = pr.unit_id ' +
         'ORDER BY pr.id');
-         query.on('row', function (row) {
-             products.push({
-                 _id: getProductId(row.pname, row.uname),
-                 description: row.pname,
-                 unitPrice: row.price,
-                 unit: row.uname,
-                 validTo: row.valid_to,
-                 plu: row.plu,
-                 type: 'product',
-                 created: new Date().toJSON()
-             });
-         });
-         query.on('end', function (result) {
-             dumpToPouch(products);
-             console.log(' -> products processed: ' + result.rowCount);
-         });
+    query.on('row', function (row) {
+        products.push({
+            _id: getProductId(row.pname, row.uname),
+            description: row.pname,
+            unitPrice: row.price,
+            unit: row.uname,
+            validTo: row.valid_to,
+            plu: row.plu,
+            type: 'product',
+            created: new Date().toJSON()
+        });
+    });
+    query.on('end', function (result) {
+        dumpToPouch(products);
+        console.log(' -> products processed: ' + result.rowCount);
+    });
+}
+
+/*
+    remove duplicate addresses from source before running this. e.g.:
+    select (c.city || '.' || s.street || '.' ||  s.psc) as agg, count(*) 
+        from lov_city c 
+        left join lov_street s on s.city_id = c.id 
+        group by agg having count(*) > 1;
+*/
+function migrateAddresses() {
+    console.log('$ Migrating addresses');
+    var pqClient = getPqClient();
+
+    var i = 0;
+    var addresses = [];
+    var query = pqClient.query('SELECT c.city, s.street, c.psc as city_zip, s.psc street_zip ' +
+        'FROM lov_city c LEFT JOIN lov_street s ON s.city_id = c.id ' +
+        'ORDER BY c.id, s.id');
+    query.on('row', function (row) {
+        var zip = row.city_zip;
+        if (row.street) {
+            zip = row.street_zip;
+        }
+
+        addresses.push({
+            _id: getAddressId(row.city, row.street, zip),
+            city: row.city,
+            street: row.street,
+            zipcode: zip,
+            type: 'address',
+            created: new Date().toJSON()
+        });
+        
+        // dump to pouch!
+        if (i++ % 1000 == 0) {
+            console.log(' -> pushing ' + addresses.length + ' addresses to pouch');
+            dumpToPouch(addresses);
+            addresses = [];
+        }
+    });
+    query.on('end', function (result) {
+        if (addresses.length != 0) {
+            console.log(' -> pushing remaining ' + addresses.length + ' addresses to pouch');
+            dumpToPouch(addresses);
+        }
+        console.log(' -> addresses processed: ' + result.rowCount);
+    });
 }
 
 function dumpToPouch(docs) {
