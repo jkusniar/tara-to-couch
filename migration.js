@@ -175,13 +175,16 @@ function migrateRecords() {
         'FROM client c ' +
         'JOIN patient p on p.client_id = c.id ' +
         'JOIN record r on r.patient_id = p.id ' +
-        'JOIN record_item i on i.record_id = r.id ' +
-        'ORDER BY c.id, p.id, r.rec_date, i.id');
+        'LEFT JOIN record_item i on i.record_id = r.id ' +
+        'ORDER BY c.id, p.id, r.id, i.id');
     query.on('row', function (row) {
-        var item = {
-            itemPrice: row.item_price
-        };
-        
+        var item = null
+        if (row.item_price != null) {
+            item = {
+                itemPrice: row.item_price
+            };
+        }
+
         var date = row.rec_date.toJSON();
 
         var recordId = getRecordId(getClientId(row.first_name, row.last_name, row.legacy_id), row.pname, date);
@@ -190,16 +193,21 @@ function migrateRecords() {
             if (record) {
                 records.push(record);
             }
-            
+
             record = {
-              _id: recordId,
-              date: date,
-              type: 'record',
-              items: [item]
+                _id: recordId,
+                date: date,
+                type: 'record'
             };
+
+            if (item) {
+                record.items = [item];
+            } else {
+                record.items = [];
+            }
             
             // dump to pouch!
-            if (i++ % 100 == 0) {
+            if (i++ % 1000 == 0) {
                 console.log(' -> pushing ' + records.length + ' records to pouch');
                 dumpToPouch(records);
                 records = [];
