@@ -67,6 +67,8 @@ function migration() {
             migrateRecords();
             migrateProducts();
             migrateAddresses();
+            migrateTitles();
+            migrateSex();
         }
     });
 }
@@ -86,13 +88,13 @@ function migrateClients() {
         'p.name as pname, p.birth_date, p.note as pnote, p.is_dead, p.lysset, ' +
         'sp.name as species, b.name as breed, sx.name as sex ' +
         'FROM client c ' +
-        'JOIN patient p on p.client_id = c.id ' +
-        'LEFT JOIN lov_title t on t.id = c.title_id ' +
-        'LEFT JOIN lov_city ci on ci.id = c.city_id ' +
-        'LEFT JOIN lov_street s on s.id = c.street_id ' +
-        'LEFT JOIN lov_species sp on sp.id = p.species_id ' +
-        'LEFT JOIN lov_breed b on b.id = p.breed_id ' +
-        'LEFT JOIN lov_sex sx on sx.id = p.sex_id ' +
+        'JOIN patient p ON p.client_id = c.id ' +
+        'LEFT JOIN lov_title t ON t.id = c.title_id ' +
+        'LEFT JOIN lov_city ci ON ci.id = c.city_id ' +
+        'LEFT JOIN lov_street s ON s.id = c.street_id ' +
+        'LEFT JOIN lov_species sp ON sp.id = p.species_id ' +
+        'LEFT JOIN lov_breed b ON b.id = p.breed_id ' +
+        'LEFT JOIN lov_sex sx ON sx.id = p.sex_id ' +
         'ORDER BY c.id, p.id');
     query.on('row', function (row) {
         var timestamp = new Date().toJSON();
@@ -160,8 +162,8 @@ function migrateClients() {
 
             // dump to pouch!
             if (i++ % 100 == 0) {
-                console.log(' -> pushing ' + clients.length + ' clients to pouch');
-                dumpToPouch(clients);
+                //console.log(' -> pushing ' + clients.length + ' clients to pouch');
+                dumpToPouch(clients, 'client');
                 clients = [];
             }
         } else {
@@ -175,8 +177,8 @@ function migrateClients() {
         clients.push(clientRec);
 
         if (clients.length != 0) {
-            console.log(' -> pushing remaining ' + clients.length + ' clients to pouch');
-            dumpToPouch(clients);
+            //console.log(' -> pushing remaining ' + clients.length + ' clients to pouch');
+            dumpToPouch(clients, 'client');
         }
         console.log(' -> patients processed: ' + result.rowCount);
         console.log(' -> clients processed: ' + (i - 1));
@@ -196,11 +198,11 @@ function migrateRecords() {
         'r.data, i.amount, i.prod_price, i.item_price, i.item_type, ' +
         'pr.name as prod_name, pr.plu, u.name as unit_name ' +
         'FROM client c ' +
-        'JOIN patient p on p.client_id = c.id ' +
-        'JOIN record r on r.patient_id = p.id ' +
-        'LEFT JOIN record_item i on i.record_id = r.id ' +
-        'LEFT JOIN lov_product pr on pr.id = i.prod_id ' +
-        'LEFT JOIN lov_unit u on u.id = pr.unit_id ' +
+        'JOIN patient p ON p.client_id = c.id ' +
+        'JOIN record r ON r.patient_id = p.id ' +
+        'LEFT JOIN record_item i ON i.record_id = r.id ' +
+        'LEFT JOIN lov_product pr ON pr.id = i.prod_id ' +
+        'LEFT JOIN lov_unit u ON u.id = pr.unit_id ' +
         'ORDER BY c.id, p.id, r.id, i.id');
     query.on('row', function (row) {
         var item = null
@@ -247,8 +249,8 @@ function migrateRecords() {
             
             // dump to pouch!
             if (i++ % 1000 == 0) {
-                console.log(' -> pushing ' + records.length + ' records to pouch');
-                dumpToPouch(records);
+                //console.log(' -> pushing ' + records.length + ' records to pouch');
+                dumpToPouch(records, 'record');
                 records = [];
             }
         } else {
@@ -262,50 +264,11 @@ function migrateRecords() {
         records.push(record);
 
         if (records.length != 0) {
-            console.log(' -> pushing remaining ' + records.length + ' records to pouch');
-            dumpToPouch(records);
+            //console.log(' -> pushing remaining ' + records.length + ' records to pouch');
+            dumpToPouch(records, 'record');
         }
         console.log(' -> record items processed: ' + result.rowCount);
         console.log(' -> records processed: ' + (i - 1));
-    });
-}
-
-/*
-    remove duplicate products from source before running this. e.g.:
-    select (p.name || '-' || u.name) as aggname, count(*) 
-        from lov_product p 
-        join lov_unit u on u.id = p.unit_id 
-        group by aggname having count(*) > 1;
-        
-    update record_item set prod_id = 512 where prod_id = 318;
-    delete from lov_product where id = 318;
-    delete from lov_product where id = 932;
-
-*/
-function migrateProducts() {
-    console.log('$ Migrating products');
-    var pqClient = getPqClient();
-
-    var products = [];
-    var query = pqClient.query('SELECT pr.name as pname, pr.price, pr.valid_to, pr.plu, u.name as uname ' +
-        'FROM lov_product pr ' +
-        'LEFT JOIN lov_unit u on u.id = pr.unit_id ' +
-        'ORDER BY pr.id');
-    query.on('row', function (row) {
-        products.push({
-            _id: getProductId(row.pname, row.uname),
-            description: row.pname,
-            unitPrice: row.price,
-            unit: row.uname,
-            validTo: row.valid_to,
-            plu: row.plu,
-            type: 'product',
-            created: new Date().toJSON()
-        });
-    });
-    query.on('end', function (result) {
-        dumpToPouch(products);
-        console.log(' -> products processed: ' + result.rowCount);
     });
 }
 
@@ -342,27 +305,97 @@ function migrateAddresses() {
         
         // dump to pouch!
         if (i++ % 1000 == 0) {
-            console.log(' -> pushing ' + addresses.length + ' addresses to pouch');
-            dumpToPouch(addresses);
+            //console.log(' -> pushing ' + addresses.length + ' addresses to pouch');
+            dumpToPouch(addresses, 'address');
             addresses = [];
         }
     });
     query.on('end', function (result) {
         if (addresses.length != 0) {
-            console.log(' -> pushing remaining ' + addresses.length + ' addresses to pouch');
-            dumpToPouch(addresses);
+            //console.log(' -> pushing remaining ' + addresses.length + ' addresses to pouch');
+            dumpToPouch(addresses, 'address');
         }
         console.log(' -> addresses processed: ' + result.rowCount);
     });
 }
 
-function dumpToPouch(docs) {
+function migrateGenericRecords(sqlQuery, recordType, recordObjFromSqlRow) {
+    console.log('$ Migrating ' + recordType);
+    var pqClient = getPqClient();
+
+    var records = [];
+    var query = pqClient.query(sqlQuery);
+    query.on('row', function (row) {
+        records.push(recordObjFromSqlRow(row));
+    });
+    query.on('end', function (result) {
+        dumpToPouch(records, recordType);
+        console.log(' -> ' + recordType + ' processed: ' + result.rowCount);
+    });
+}
+
+/*
+    remove duplicate products from source before running this. e.g.:
+    select (p.name || '-' || u.name) as aggname, count(*) 
+        from lov_product p 
+        join lov_unit u on u.id = p.unit_id 
+        group by aggname having count(*) > 1;
+        
+    update record_item set prod_id = 512 where prod_id = 318;
+    delete from lov_product where id = 318;
+    delete from lov_product where id = 932;
+
+*/
+function migrateProducts() {
+    var sql = 'SELECT pr.name as pname, pr.price, pr.valid_to, pr.plu, u.name as uname ' +
+        'FROM lov_product pr ' +
+        'LEFT JOIN lov_unit u ON u.id = pr.unit_id ' +
+        'ORDER BY pr.id';
+    migrateGenericRecords(sql, 'product', function (row) {
+        return {
+            _id: getProductId(row.pname, row.uname),
+            description: row.pname,
+            unitPrice: row.price,
+            unit: row.uname,
+            validTo: row.valid_to,
+            plu: row.plu,
+            type: 'product',
+            created: new Date().toJSON()
+        };
+    });
+}
+
+function migrateTitles() {
+    var sql = 'SELECT name FROM lov_title ORDER BY name';
+    migrateGenericRecords(sql, 'title', function (row) {
+        return {
+            _id: 'title/' + getSlug(row.name, { lang: 'sk' }),
+            title: row.name,
+            type: 'title',
+            created: new Date().toJSON()
+        };
+    });
+}
+
+function migrateSex() {
+    var sql = 'SELECT name FROM lov_sex ORDER BY name';
+    migrateGenericRecords(sql, 'sex', function (row) {
+        return {
+            _id: 'sex/' + getSlug(row.name, { lang: 'sk' }),
+            title: row.name,
+            type: 'sex',
+            created: new Date().toJSON()
+        };
+    });
+}
+
+function dumpToPouch(docs, docType) {
     var db = new PouchDB(couchString);
     db.bulkDocs(docs).then(function (result) {
         for (var i = 0; i < result.length; i++) {
             var res = result[i];
             if (res.error) {
-                console.log(' -> failed to insert record ' + res);
+                console.log(' -> failed to insert ' + docType + ' -> ' + res + ';; id:' + res.id);
             }
         }
     }).catch(function (err) {
@@ -370,5 +403,5 @@ function dumpToPouch(docs) {
     });
 }
 
-// migration procedure
+// RUN
 migration();
